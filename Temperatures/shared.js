@@ -1,15 +1,13 @@
 /*
  * shared.js
  * Settings and helper functions used by both heatmap levels
- * (level1.html and level2.html). Requires D3 v7 to be loaded first.
+ * (level1.html and level2.html). Requires D3 v7 and temperature_data.js to be loaded first.
  */
 
 // ---------------------------------------------------------------------------
 // Shared settings
 // ---------------------------------------------------------------------------
 const SHARED_CONFIG = {
-  dataFile: "temperature_daily.csv",
-
   monthNames: [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"
@@ -49,15 +47,18 @@ const SHARED_CONFIG = {
 // ---------------------------------------------------------------------------
 
 /**
- * Reads the daily CSV and converts each row into
+ * Parses the daily temperature CSV (embedded in temperature_data.js) and converts each row into
  * { date: Date, maxTemperature: number, minTemperature: number }.
+ * Returns a Promise so callers don't depend on how the data is loaded.
  */
 function loadDailyData() {
-  return d3.csv(SHARED_CONFIG.dataFile, row => ({
-    date: d3.timeParse("%Y-%m-%d")(row.date),
+  const parseDate = d3.timeParse("%Y-%m-%d");
+  const dailyRecords = d3.csvParse(TEMPERATURE_CSV, row => ({
+    date: parseDate(row.date),
     maxTemperature: +row.max_temperature,
     minTemperature: +row.min_temperature
   }));
+  return Promise.resolve(dailyRecords);
 }
 
 /**
@@ -158,7 +159,7 @@ function drawColorLegend(svg, colorScale, positionX, positionY) {
     .data(colors)
     .join("rect")
     .attr("x", 0)
-    .attr("y", (color, index) => index * swatchHeight)
+    .attr("y", (_color, swatchIndex) => swatchIndex * swatchHeight)
     .attr("width", swatchWidth)
     .attr("height", swatchHeight)
     .attr("fill", color => color);
