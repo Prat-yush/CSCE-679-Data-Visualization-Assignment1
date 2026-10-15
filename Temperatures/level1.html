@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Level 1 - Year/Month Temperature Heatmap</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="shared.js"></script>
+</head>
+<body>
+  <h2>Hong Kong Monthly Temperature</h2>
+  <p class="mode-label" id="mode-label"></p>
+  <div id="chart"></div>
+
+  <script>
+    /*
+     * Level 1: Year/Month heatmap.
+     * One cell per month of each year (years along x, months along y).
+     * Cell color = that month's maximum or minimum temperature; click the chart to switch.
+     */
+
+    // -----------------------------------------------------------------------
+    // Settings for this level
+    // -----------------------------------------------------------------------
+    const LEVEL1_CONFIG = {
+      cellWidth: 40,    // horizontal space per year, including the gap
+      cellHeight: 37,   // vertical space per month, including the gap
+      cellPadding: 0.1, // fraction of each cell left white as the gap
+      margin: { top: 30, right: 120, bottom: 20, left: 80 }
+    };
+
+    // -----------------------------------------------------------------------
+    // Build the chart once the data is loaded
+    // -----------------------------------------------------------------------
+    loadDailyData().then(dailyRecords => {
+      const monthSummaries = summarizeByMonth(dailyRecords);
+      drawLevel1Heatmap(monthSummaries);
+    });
+
+    /** Draws the full Level 1 chart: axes, cells, legend, tooltip and max/min toggle. */
+    function drawLevel1Heatmap(monthSummaries) {
+      const { cellWidth, cellHeight, cellPadding, margin } = LEVEL1_CONFIG;
+
+      // Every year in the data, in order, for the x axis
+      const [firstYear, lastYear] = d3.extent(monthSummaries, summary => summary.year);
+      const years = d3.range(firstYear, lastYear + 1);
+
+      const matrixWidth = years.length * cellWidth;
+      const matrixHeight = 12 * cellHeight;
+
+      // SVG canvas with an inner group shifted by the margins
+      const svg = d3.select("#chart").append("svg")
+        .attr("width", matrixWidth + margin.left + margin.right)
+        .attr("height", matrixHeight + margin.top + margin.bottom);
+
+      const chartGroup = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      // Scales and axes
+      const { xScale, yScale } = createMatrixScales(years, matrixWidth, matrixHeight, cellPadding);
+      const colorScale = createColorScale();
+      drawMatrixAxes(chartGroup, xScale, yScale);
+
+      // Matrix cells: one rectangle per (year, month)
+      const { showTooltip, hideTooltip } = createTooltip();
+
+      const cells = chartGroup.append("g")
+        .attr("class", "cells")
+        .selectAll("rect")
+        .data(monthSummaries)
+        .join("rect")
+        .attr("x", summary => xScale(summary.year))
+        .attr("y", summary => yScale(summary.month))
+        .attr("width", xScale.bandwidth())
+        .attr("height", yScale.bandwidth())
+        .on("mousemove", showTooltip)
+        .on("mouseleave", hideTooltip);
+
+      // Legend to the right of the matrix
+      drawColorLegend(
+        svg,
+        colorScale,
+        margin.left + matrixWidth + SHARED_CONFIG.legend.gapFromMatrix,
+        margin.top
+      );
+
+      // Click anywhere on the chart to switch between max and min
+      enableModeToggle(svg, d3.select("#mode-label"), mode => {
+        cells.transition()
+          .duration(SHARED_CONFIG.transitionMs)
+          .attr("fill", summary => colorScale(getTemperatureForMode(summary, mode)));
+      });
+    }
+  </script>
+</body>
+</html>

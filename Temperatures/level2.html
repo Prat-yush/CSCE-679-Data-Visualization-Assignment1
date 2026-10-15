@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Level 2 - Year/Month Heatmap with Daily Lines</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="shared.js"></script>
+</head>
+<body>
+  <h2>Hong Kong Monthly Temperature with Daily Changes</h2>
+  <p class="mode-label" id="mode-label"></p>
+  <div id="chart"></div>
+
+  <script>
+    /*
+     * Level 2: Year/Month heatmap with mini line charts.
+     * Shows only the most recent years. Cell background = monthly max or min temperature
+     * (click the chart to switch). Each cell holds a mini line chart of that month's daily
+     * maximum (green) and daily minimum (light blue) temperatures.
+     */
+
+    // -----------------------------------------------------------------------
+    // Settings for this level
+    // -----------------------------------------------------------------------
+    const LEVEL2_CONFIG = {
+      yearsToShow: 10,   // number of most recent years to display
+      cellWidth: 97,     // horizontal space per year, including the gap
+      cellHeight: 72,    // vertical space per month, including the gap
+      cellPadding: 0.2,  // fraction of each cell left white as the gap
+      margin: { top: 30, right: 120, bottom: 20, left: 80 },
+
+      miniChart: {
+        innerPadding: 4,  // space between the cell edge and the lines
+        daysInLongestMonth: 31,
+        lineWidth: 2,
+        maxLineColor: "#31a354",  // green: daily maximum
+        minLineColor: "#a6cbe0"   // light blue: daily minimum
+      },
+
+      // Small key under the color legend explaining the two lines
+      lineKey: {
+        gapBelowColorLegend: 40,
+        rowHeight: 20,
+        sampleLength: 20
+      }
+    };
+
+    // -----------------------------------------------------------------------
+    // Build the chart once the data is loaded
+    // -----------------------------------------------------------------------
+    loadDailyData().then(dailyRecords => {
+      const allMonthSummaries = summarizeByMonth(dailyRecords);
+      const recentMonthSummaries = keepMostRecentYears(allMonthSummaries, LEVEL2_CONFIG.yearsToShow);
+      drawLevel2Heatmap(recentMonthSummaries);
+    });
+
+    /** Keeps only the month summaries from the last `yearCount` years in the data. */
+    function keepMostRecentYears(monthSummaries, yearCount) {
+      const latestYear = d3.max(monthSummaries, summary => summary.year);
+      const firstYearShown = latestYear - yearCount + 1;
+      return monthSummaries.filter(summary => summary.year >= firstYearShown);
+    }
+
+    /** Draws the full Level 2 chart: axes, cells, mini line charts, legends, tooltip and toggle. */
+    function drawLevel2Heatmap(monthSummaries) {
+      const { cellWidth, cellHeight, cellPadding, margin } = LEVEL2_CONFIG;
+
+      // Every year shown, in order, for the x axis
+      const [firstYear, lastYear] = d3.extent(monthSummaries, summary => summary.year);
+      const years = d3.range(firstYear, lastYear + 1);
+
+      const matrixWidth = years.length * cellWidth;
+      const matrixHeight = 12 * cellHeight;
+
+      // SVG canvas with an inner group shifted by the margins
+      const svg = d3.select("#chart").append("svg")
+        .attr("width", matrixWidth + margin.left + margin.right)
+        .attr("height", matrixHeight + margin.top + margin.bottom);
+
+      const chartGroup = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      // Scales and axes
+      const { xScale, yScale } = createMatrixScales(years, matrixWidth, matrixHeight, cellPadding);
+      const colorScale = createColorScale();
+      drawMatrixAxes(chartGroup, xScale, yScale);
+
+      // One group per (year, month), positioned at its cell's top-left corner
+      const { showTooltip, hideTooltip } = createTooltip();
+
+      const cellGroups = chartGroup.append("g")
+        .attr("class", "cells")
+        .selectAll("g")
+        .data(monthSummaries)
+        .join("g")
+        .attr("transform", summary => `translate(${xScale(summary.year)},${yScale(summary.month)})`)
+        .on("mousemove", showTooltip)
+        .on("mouseleave", hideTooltip);
+
+      // Cell background, colored by the monthly temperature
+      const cellBackgrounds = cellGroups.append("rect")
+        .attr("width", xScale.bandwidth())
+        .attr("height", yScale.bandwidth());
+
+      // Mini line charts inside every cell
+      drawMiniLineCharts(cellGroups, monthSummaries, xScale.bandwidth(), yScale.bandwidth());
+
+      // Legends to the right of the matrix
+      const legendX = margin.left + matrixWidth + SHARED_CONFIG.legend.gapFromMatrix;
+      drawColorLegend(svg, colorScale, legendX, margin.top);
+      drawLineKey(svg, colorScale, legendX, margin.top);
+
+      // Click anywhere on the chart to switch between max and min
+      enableModeToggle(svg, d3.select("#mode-label"), mode => {
+        cellBackgrounds.transition()
+          .duration(SHARED_CONFIG.transitionMs)
+          .attr("fill", summary => colorScale(getTemperatureForMode(summary, mode)));
+      });
+    }
+
+    /**
+     * Adds two lines (daily max and daily min) to every cell.
+     * All cells share one temperature scale so lines can be compared between cells.
+     * x = day of month (1-31), y = temperature.
+     */
+    function drawMiniLineCharts(cellGroups, monthSummaries, cellInnerWidth, cellInnerHeight) {
+      const { innerPadding, daysInLongestMonth, lineWidth, maxLineColor, minLineColor } =
+        LEVEL2_CONFIG.miniChart;
+
+      // Shared temperature range across all daily values shown
+      const lowestDailyTemperature = d3.min(monthSummaries, summary => summary.minTemperature);
+      const highestDailyTemperature = d3.max(monthSummaries, summary => summary.maxTemperature);
+
+      const dayScale = d3.scaleLinear()
+        .domain([1, daysInLongestMonth])
+        .range([innerPadding, cellInnerWidth - innerPadding]);
+
+      const temperatureScale = d3.scaleLinear()
+        .domain([lowestDailyTemperature, highestDailyTemperature])
+        .range([cellInnerHeight - innerPadding, innerPadding]);
+
+      const maxTemperatureLine = d3.line()
+        .x(day => dayScale(day.dayOfMonth))
+        .y(day => temperatureScale(day.maxTemperature));
+
+      const minTemperatureLine = d3.line()
+        .x(day => dayScale(day.dayOfMonth))
+        .y(day => temperatureScale(day.minTemperature));
+
+      // Draw min first so the max line sits on top where they overlap
+      cellGroups.append("path")
+        .attr("d", summary => minTemperatureLine(summary.days))
+        .attr("fill", "none")
+        .attr("stroke", minLineColor)
+        .attr("stroke-width", lineWidth);
+
+      cellGroups.append("path")
+        .attr("d", summary => maxTemperatureLine(summary.days))
+        .attr("fill", "none")
+        .attr("stroke", maxLineColor)
+        .attr("stroke-width", lineWidth);
+    }
+
+    /** Draws a small key below the color legend naming the green and light-blue lines. */
+    function drawLineKey(svg, colorScale, positionX, colorLegendTop) {
+      const { gapBelowColorLegend, rowHeight, sampleLength } = LEVEL2_CONFIG.lineKey;
+      const { maxLineColor, minLineColor, lineWidth } = LEVEL2_CONFIG.miniChart;
+      const { swatchHeight, labelOffsetX } = SHARED_CONFIG.legend;
+
+      const colorLegendHeight = colorScale.range().length * swatchHeight;
+      const lineEntries = [
+        { label: "Daily max", color: maxLineColor },
+        { label: "Daily min", color: minLineColor }
+      ];
+
+      const keyGroup = svg.append("g")
+        .attr("class", "legend")
+        .attr("transform",
+          `translate(${positionX},${colorLegendTop + colorLegendHeight + gapBelowColorLegend})`);
+
+      const keyRows = keyGroup.selectAll("g")
+        .data(lineEntries)
+        .join("g")
+        .attr("transform", (entry, index) => `translate(0,${index * rowHeight})`);
+
+      keyRows.append("line")
+        .attr("x1", 0)
+        .attr("x2", sampleLength)
+        .attr("stroke", entry => entry.color)
+        .attr("stroke-width", lineWidth);
+
+      keyRows.append("text")
+        .attr("x", sampleLength + labelOffsetX)
+        .attr("dominant-baseline", "middle")
+        .text(entry => entry.label);
+    }
+  </script>
+</body>
+</html>
